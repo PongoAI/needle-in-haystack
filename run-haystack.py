@@ -8,11 +8,14 @@ from anthropic import Anthropic
 import tiktoken
 import time
 from anthropic import RateLimitError
+from mistralai.client import MistralClient
+from mistralai.models.chat_completion import ChatMessage
 
 
 # Load environment variables
 load_dotenv()
-model_name = 'accounts/fireworks/models/llama-v3p1-405b-instruct'
+# model_name = 'accounts/fireworks/models/llama-v3p1-405b-instruct'
+model_name = "mistral-large-2407"
 
 def load_haystack(file_path: str) -> str:
     with open(file_path, 'r') as file:
@@ -44,7 +47,7 @@ def insert_needle(context: str, needle: str, depth: float, tokenizer: Any) -> st
 
 def run_test_openai_client(openai_client: Any, model_name: str, context: str) -> str:
     prompt = f"Based on the following context, give a brief answer to the provided question.  If the question cannot be answered by the context, say 'The quetion cannot be answered with the current context'.\n\n Question: What colors are in Pongo's logo?\n\n ==========CONTEXT START==========\n{context}\n==========CONTEXT END=========="
-
+    time.sleep(1)
     for attempt in range(3):
         try:
             response = openai_client.chat.completions.create(
@@ -54,6 +57,7 @@ def run_test_openai_client(openai_client: Any, model_name: str, context: str) ->
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
+            print(e)
             if attempt < 2:
                 print(f"Attempt {attempt + 1} failed. Retrying in 61 seconds...")
                 time.sleep(61)
@@ -62,6 +66,26 @@ def run_test_openai_client(openai_client: Any, model_name: str, context: str) ->
 
     raise Exception("All attempts failed")
 
+def run_test_mistral_client(mistral_client: MistralClient, model_name: str, context: str) -> str:
+    prompt = f"Based on the following context, give a brief answer to the provided question.  If the question cannot be answered by the context, say 'The quetion cannot be answered with the current context'.\n\n Question: What colors are in Pongo's logo?\n\n ==========CONTEXT START==========\n{context}\n==========CONTEXT END==========\n Answer:"
+    time.sleep(1)
+    for attempt in range(3):
+        try:
+            response = mistral_client.chat(
+                model=model_name,
+                messages=[ChatMessage(role="user", content=prompt)],
+                max_tokens=64
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(e)
+            if attempt < 2:
+                print(f"Attempt {attempt + 1} failed. Retrying in 61 seconds...")
+                time.sleep(61)
+            else:
+                raise e
+
+    raise Exception("All attempts failed")
 
 #used anthropic api to send requests becuase rate limits were too low
 def run_test_anthropic_client(anthropic_client: Anthropic, model_name: str, context: str, max_retries: int = 5) -> str:
@@ -102,7 +126,7 @@ def run_haystack_tests(model_name: str, client: Any, max_context_size: int):
     haystack = load_haystack('haystack.txt')
     needle = "\n\nJamari: Pongo's logo is purple and white.\n\n"
     model_file_name = model_name.split('/')[-1] if '/' in model_name else model_name
-    file_path = f'./haystack-results/{model_file_name}_results-2.json'
+    file_path = f'./haystack-results/{model_file_name}_results.json'
     tokenizer = get_tokenizer(model_name)
 
     context_intervals = 30
@@ -111,8 +135,8 @@ def run_haystack_tests(model_name: str, client: Any, max_context_size: int):
     for i in range(context_intervals):
         context_percentage = (i + 1) * (100 / context_intervals)
         context_size = int(max_context_size * (context_percentage / 100))
-        if context_size > 64000:
-            continue
+        # if context_size > 64000:
+        #     continue
         for j in range(depth_intervals):
             depth_percentage = (j + 1) * (100 / depth_intervals)
             depth = depth_percentage / 100
@@ -124,6 +148,8 @@ def run_haystack_tests(model_name: str, client: Any, max_context_size: int):
             
             if model_name == 'claude-3-5-sonnet-20240620':
                 model_response = run_test_anthropic_client(client, model_name, context_with_needle)
+            if model_name == 'mistral-large-2407':
+                model_response = run_test_mistral_client(client, model_name, context_with_needle)
             else:  
                 model_response = run_test_openai_client(client, model_name, context_with_needle)
             
@@ -156,6 +182,11 @@ def main():
     elif model_name == 'azureai':
         client = OpenAI(api_key=os.getenv('AZURE_API_KEY'), base_url='')
         max_context_size = 128000
+    elif model_name == 'mistral-large-2407':
+        client = MistralClient(api_key=os.getenv('MISTRAL_API_KEY'))
+        max_context_size = 128000
+
+        
     else: #default to sonnet 3.5
         client = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
         max_context_size = 200000
